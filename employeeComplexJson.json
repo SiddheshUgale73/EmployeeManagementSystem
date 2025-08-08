@@ -1,0 +1,41 @@
+{
+  "employees": [
+      {
+          "id": "1",
+          "name": "John Doe",
+          "designation": "Software Engineer",
+          "department": "IT",
+          "salary": 60000,
+          "joining_date": "01-01-2020",
+          "education": [
+              {
+                  "degree": "Bachelor of Science in Computer Science",
+                  "university": "University of XYZ",
+                  "year": "2010-2014"
+              },
+              {
+                  "degree": "Master of Science in Computer Science",
+                  "university": "University of ABC",
+                  "year": "2015-2017"
+              }
+          ],
+          "skills": [
+              "Java",
+              "Python",
+              "JavaScript",
+              "SQL"
+          ],
+          "previous_experience": [
+              {
+                  "company": "Company A",
+                  "position": "Software Developer",
+                  "duration": "2 years"
+              },
+              {
+                  "company": "Company B",
+                  "position": "Senior Software Developer",
+                  "duration": "3 years"
+              }
+          ]
+      }
+  ]}
