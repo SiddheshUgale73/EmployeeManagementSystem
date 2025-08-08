@@ -1,0 +1,356 @@
+------------JSON file loading from external ------------------
+
+
+--------------------storage integration aws s3 ------------------
+
+CREATE OR REPLACE STORAGE integration aws_integration
+TYPE = EXTERNAL_STAGE
+STORAGE_PROVIDER = S3
+ENABLED = TRUE
+STORAGE_AWS_ROLE_ARN = 'arn:aws:iam::937025013041:role/jsondataload'
+STORAGE_ALLOWED_LOCATIONS = ('s3://sidd07/Json data load/')
+COMMENT = 'Integration with aws s3 bucket';
+
+
+desc integration aws_integration; --------arn:aws:iam::371439860622:user/ip751000-s
+
+
+use database de_25;
+
+--------------------creating the file format--------------------
+
+create or replace file format aws_jsonff
+type = json
+strip_outer_array = true; 
+
+-------------creating stage for external utility-----------------
+
+create or replace stage aws_json
+storage_integration=  aws_integration
+file_format = aws_jsonff
+url= 's3://sidd07/Json data load/';
+
+
+list @aws_json;
+
+---------------creating stage table for store data------------------
+
+create or replace table author_1 
+(json_data variant);
+
+
+select * from author_1;
+
+-----------------copying those data from stage into table ------------------------
+
+copy into author_1
+from @aws_json/author.json
+file_format = aws_jsonff;
+
+
+select * from author_1;
+
+----------------------parshing of json data into column format ----------------------
+
+-------asscessing simple data
+
+select json_data : author_name :: string as authorname,
+       json_data : category :: string
+from author_1;
+
+
+SELECT $1:AuthorName from author_1;
+
+--------assescing array json data
+
+select JSON_DATA:Category[0]:best_edition from author_1;
+
+
+-------acessing nested json
+
+SELECT
+  JSON_DATA:AuthorName::string AS AuthorName,
+  JSON_DATA:Category[0]:CategoryName,
+  JSON_DATA:Category[1]:CategoryName
+FROM author_1;
+
+
+
+SELECT
+
+  JSON_DATA:AuthorName::string AS AuthorName,
+  JSON_DATA:Category[0]:Genre[0]:GenreName,
+  JSON_DATA:Category[0]:Genre[0]:Novel,
+  JSON_DATA:Category[0]:Genre[0]:Novel[1]:Sales
+FROM author_1;
+
+
+
+---------Parsing JSON data into columns (removes quotes)
+SELECT
+  JSON_DATA:AuthorName::string AS AuthorName,
+  JSON_DATA:Category[0]:CategoryName::string AS Fiction_Category,
+  JSON_DATA:Category[0]:Genre[0]:GenreName::String,
+  JSON_DATA:Category[0]:Genre[1]:GenreName::String,
+  JSON_DATA:Category[1]:CategoryName::String,
+  JSON_DATA:Category[1]:Genre[0]:GenreName::String,
+  JSON_DATA:Category[1]:Genre[1]:GenreName::String
+FROM author_1;
+
+
+
+-------------------------flattening---------------------
+
+SELECT
+  JSON_DATA:AuthorName::string AS AuthorName,
+  VALUE:CategoryName::String AS CategoryName
+FROM author_1,
+  LATERAL FLATTEN(input => JSON_DATA:Category);
+  
+
+ 
+SELECT
+  JSON_DATA:AuthorName::string AS Author_Name,
+  flatten_category.VALUE:CategoryName::String AS Category_name,
+  flatten_genre.VALUE:GenreName::String AS Genre_Name,
+  flatten_Novel.VALUE:Novel::String AS Novel_name,
+  flatten_Novel.VALUE:Sales::String AS Sales_in_millions
+FROM author_1
+  , LATERAL FLATTEN(input => JSON_DATA:Category) AS flatten_category
+  , LATERAL FLATTEN(input => flatten_category.VALUE:Genre) AS flatten_genre
+  , LATERAL FLATTEN(input => flatten_genre.VALUE:Novel) AS flatten_Novel
+;
+
+ 
+--------loading flatted  data into main table 
+
+ create or replace table author_final as
+ select json_data:AuthorName:: string as authorname,
+ --flatten_category.value:CategoryName::string as category_name,
+ flatten_gener.value:GenreName::string as genre_name,
+ flatten_novel.value:Novel::string as novel_name,
+ flatten_novel.value:Sales::string as sales_in_millions
+ from author_1,
+ LATERAL FLATTEN (input => json_data:Category) as flatten_category,
+ LATERAL FLATTEN (input =>flatten_category.value:Genre) as flatten_gener,
+ LATERAL FLATTEN (input =>flatten_gener.value:Novel) as flatten_novel
+ ;
+
+ select * from author_final;
+
+
+-----------------------------------------------sales json file loading -----------------------------
+create or replace file format json_ff
+type = json
+strip_outer_array = true; 
+
+list @aws_json;
+
+create or replace table sales
+ (
+    city string,
+    zip string,
+    state string,
+    type string default 'Residential',
+    sale_date date,
+    price string
+ );
+
+ select * from sales;
+
+ copy into sales(city,state,zip,sale_date,price)
+ from ( select substr($1:location.state_city,4),
+                     ($1:location.zip),
+               substr($1:location.state_city,1,2),                 
+                     ($1:sale_date),
+                     ($1:price)
+        from @aws_json/sales.json             
+      )
+ file_format= aws_jsonff
+ on_error="continue"; 
+
+
+ select * from sales;
+
+-----------------------------------FLATEENING--------------------------------------
+
+create or replace table employeecomplexjson
+(emp_com variant);
+
+
+copy into employeecomplexjson
+from @aws_json/employeeComplexJson.json
+file_format = aws_jsonff;
+
+
+
+
+select 
+ emp.value:id::string as id,
+ emp.value:name::string as name,
+ emp.value:designation::string as designation,
+ emp.value:department::string as department,
+ emp.value:salary::int as salary,
+ emp.value:joining_date::string as joining_date,
+ edu.value:degree::string as degree,
+ edu.value:university::string as university,
+ edu.value:year::string as year,
+ 
+ skill.value::string as skills,
+ 
+experience.value:company::string as company,
+experience.value:position::string as position,
+experience.value:duration::string as duration
+ 
+ 
+ from employeeComplexJson,
+  LATERAL FLATTEN (input => emp_com:employees) as emp,
+  LATERAL FLATTEN (input => emp.value:education) as edu,
+  LATERAL FLATTEN (input => emp.value:skills) as skill,
+  LATERAL FLATTEN (input => emp.value:previous_experience) as experience;
+
+
+-------------load flatted data into main table---------------------
+  
+
+  create or replace table employeeComplexJson as
+   select 
+ emp.value:id::string as id,
+ emp.value:name::string as name,
+ emp.value:designation::string as designation,
+ emp.value:department::string as department,
+ emp.value:salary::int as salary,
+ emp.value:joining_date::string as joining_date,
+ edu.value:degree::string as degree,
+ edu.value:university::string as university,
+ edu.value:year::string as year,
+ 
+ skill.value::string as skills,
+ 
+experience.value:company::string as company,
+experience.value:position::string as position,
+experience.value:duration::string as duration
+ 
+ 
+ from employeeComplexJson,
+  LATERAL FLATTEN (input => emp_com:employees) as emp,
+  LATERAL FLATTEN (input => emp.value:education) as edu,
+  LATERAL FLATTEN (input => emp.value:skills) as skill,
+  LATERAL FLATTEN (input => emp.value:previous_experience) as experience;
+
+
+  select * from employeeComplexJson;
+
+
+
+
+
+  ------------------------------employee simple json -----------------------------
+
+ 
+
+create or replace table employeeSmplieJSON(
+emp_smp variant
+);
+
+copy into employeeSmplieJSON
+from @aws_json/employeeSimplejson.json
+file_format = aws_jsonff;
+
+
+list@aws_json;
+
+select * from employeesmpliejson;
+
+
+select
+ emp.value:id::string as id,
+ emp.value:name::string as name,
+ emp.value:designation::string as designation,
+ emp.value:department::string as department,
+ emp.value:salary::int as salary,
+ emp.value:joining_date::string as joining_date
+from employeeSmplieJSON,
+ LATERAL FLATTEN (input => emp_smp:employees) as emp;
+
+-------loadded flatted data into main table ---------------------
+
+ create or replace table employeeSmplieJSON as select
+ emp.value:id::string as id,
+ emp.value:name::string as name,
+ emp.value:designation::string as designation,
+ emp.value:department::string as department,
+ emp.value:salary::int as salary,
+ emp.value:joining_date::string as joining_date
+from employeeSmplieJSON,
+ LATERAL FLATTEN (input => emp_smp:employees) as emp;
+
+
+ select * from employeeSmplieJSON;
+
+
+
+ -------------------------------------employee json file ----------------------------------
+
+ 
+create or replace table employee(
+emp variant
+);
+
+copy into employee
+from @aws_json/employee.json
+file_format = aws_jsonff;
+
+
+select 
+  emp:employee.name::string as name,
+  emp:employee.age::int as age,
+  emp:employee.height_in_ft::number as height_in_ft,
+  emp:employee.married::string as married,
+  emp:employee.has_kids::string as has_kids,
+  emp:employee.stock_options::string as stock_options,
+  emp:employee.phone::string as phone,
+  emp:employee.date_of_birth::date as date_of_birth,
+  emp:employee.dob_timestamp::timestamp as dob_timestamp,
+  emp:employee.street::string as street,
+  emp:employee.city::string as city,
+  emp:employee.State::string as State
+from employee;
+
+
+
+ ----------------loading flattend data into main table------------
+   
+create or replace table employee as
+select 
+  emp:employee.name::string as name,
+  emp:employee.age::int as age,
+  emp:employee.height_in_ft::number as height_in_ft,
+  emp:employee.married::string as married,
+  emp:employee.has_kids::string as has_kids,
+  emp:employee.stock_options::string as stock_options,
+  emp:employee.phone::string as phone,
+  emp:employee.date_of_birth::date as date_of_birth,
+  emp:employee.dob_timestamp::timestamp as dob_timestamp,
+  emp:employee.street::string as street,
+  emp:employee.city::string as city,
+  emp:employee.State::string as State
+from employee;
+
+select * from employee;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 
+
